@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS words (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    french TEXT NOT NULL,
+    target_word TEXT NOT NULL,
     english TEXT NOT NULL,
     parts TEXT
 );

@@ -10,7 +10,7 @@ import (
 )
 
 func GetWords(c *gin.Context) {
-	rows, err := database.DB.Query("SELECT id, french, english, parts FROM words")
+	rows, err := database.DB.Query("SELECT id, target_word, english, parts FROM words")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -21,11 +21,16 @@ func GetWords(c *gin.Context) {
 
 	for rows.Next() {
 		var word models.Word
-		if err := rows.Scan(&word.ID, &word.French, &word.English, &word.Parts); err != nil {
+		if err := rows.Scan(&word.ID, &word.TargetWord, &word.English, &word.Parts); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		words = append(words, word)
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, words)
@@ -36,7 +41,7 @@ func GetWordByID(c *gin.Context) {
 
 	var word models.Word
 
-	err := database.DB.QueryRow("SELECT id, french, english, parts FROM words WHERE id = ?", id).Scan(&word.ID, &word.French, &word.English, &word.Parts)
+	err := database.DB.QueryRow("SELECT id, target_word, english, parts FROM words WHERE id = ?", id).Scan(&word.ID, &word.TargetWord, &word.English, &word.Parts)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

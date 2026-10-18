@@ -97,7 +97,7 @@ func seedWords(db *sql.DB) error {
 	}
 
 	for _, word := range words {
-		_, err := db.Exec("INSERT INTO words (french, english, parts) VALUES (?, ?, ?)", word.French, word.English, word.Parts)
+		_, err := db.Exec("INSERT INTO words (target_word, english, parts) VALUES (?, ?, ?)", word.TargetWord, word.English, word.Parts)
 		if err != nil {
 			fmt.Printf("Error inserting data into database: %v\n", err)
 			return err

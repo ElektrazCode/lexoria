@@ -48,7 +48,7 @@ func GetGroupByID(c *gin.Context) {
 func GetGroupWords(c *gin.Context) {
 	id := c.Param("id")
 
-	rows, err := database.DB.Query("SELECT w.id, w.french, w.english, w.parts FROM words w JOIN words_groups wg ON w.id = wg.word_id WHERE wg.group_id = ?", id)
+	rows, err := database.DB.Query("SELECT w.id, w.target_word, w.english, w.parts FROM words w JOIN words_groups wg ON w.id = wg.word_id WHERE wg.group_id = ?", id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -59,7 +59,7 @@ func GetGroupWords(c *gin.Context) {
 
 	for rows.Next() {
 		var word models.Word
-		if err := rows.Scan(&word.ID, &word.French, &word.English, &word.Parts); err != nil {
+		if err := rows.Scan(&word.ID, &word.TargetWord, &word.English, &word.Parts); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

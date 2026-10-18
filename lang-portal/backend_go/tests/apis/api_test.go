@@ -17,8 +17,13 @@ import (
 var router *gin.Engine
 
 func TestMain(m *testing.M) {
-	// Initialize the test database
+	// Start each test run with a fresh test database.
 	dbPath := filepath.Join("..", "..", "database", "test_words.db")
+
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		panic(fmt.Sprintf("Error removing old test database: %v", err))
+	}
+
 	database.InitDB(dbPath)
 
 	// Create the necessary tables and insert sample data
@@ -29,7 +34,7 @@ func TestMain(m *testing.M) {
 	router = setupRouter()
 
 	// Run the tests
-	m.Run()
+	os.Exit(m.Run())
 }
 
 func createTestTables() {
@@ -51,7 +56,7 @@ func insertTestData() {
 	if err != nil {
 		panic(fmt.Sprintf("Error inserting into activities table: %v", err))
 	}
-	_, err = db.Exec(`INSERT INTO words (french, english, parts) VALUES ('Sample Word', 'Sample Meaning', 'Sample Part')`)
+	_, err = db.Exec(`INSERT INTO words (target_word, english, parts) VALUES ('Sample Word', 'Sample Meaning', 'Sample Part')`)
 	if err != nil {
 		panic(fmt.Sprintf("Error inserting into words table: %v", err))
 	}
