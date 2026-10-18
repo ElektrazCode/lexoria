@@ -1,30 +1,50 @@
 [
     {
-        "word_id": 1,
-        "group_id": 2
+        "target_word": "Γεια σου",
+        "group": "Everyday Essentials"
     },
     {
-        "word_id": 2,
-        "group_id": 2
+        "target_word": "Γεια σας",
+        "group": "Everyday Essentials"
     },
     {
-        "word_id": 3,
-        "group_id": 2
+        "target_word": "Καλημέρα",
+        "group": "Everyday Essentials"
     },
     {
-        "word_id": 4,
-        "group_id": 2
+        "target_word": "Καλησπέρα",
+        "group": "Everyday Essentials"
     },
     {
-        "word_id": 5,
-        "group_id": 2
+        "target_word": "Καληνύχτα",
+        "group": "Everyday Essentials"
     },
     {
-        "word_id": 6,
-        "group_id": 2
+        "target_word": "Ευχαριστώ",
+        "group": "Everyday Essentials"
     },
     {
-        "word_id": 7,
-        "group_id": 2
+        "target_word": "Παρακαλώ",
+        "group": "Everyday Essentials"
+    },
+    {
+        "target_word": "Ναι",
+        "group": "Everyday Essentials"
+    },
+    {
+        "target_word": "Όχι",
+        "group": "Everyday Essentials"
+    },
+    {
+        "target_word": "Συγγνώμη",
+        "group": "Everyday Essentials"
+    },
+    {
+        "target_word": "Νερό",
+        "group": "Everyday Essentials"
+    },
+    {
+        "target_word": "Βιβλίο",
+        "group": "Everyday Essentials"
     }
 ]

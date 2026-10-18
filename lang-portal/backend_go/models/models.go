@@ -28,10 +28,10 @@ type Session struct {
 }
 
 type Word struct {
-    ID         int    `json:"id"`
-    TargetWord string `json:"target_word"`
-    English    string `json:"english"`
-    Parts      string `json:"parts"`
+	ID         int    `json:"id"`
+	TargetWord string `json:"target_word"`
+	English    string `json:"english"`
+	Parts      string `json:"parts"`
 }
 
 type WordReview struct {

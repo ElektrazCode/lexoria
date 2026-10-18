@@ -3,7 +3,7 @@ package apis
 import (
 	"backend_go/database"
 	"backend_go/handlers"
-	"fmt"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,75 +12,51 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-var router *gin.Engine
-
 func TestMain(m *testing.M) {
-	// Start each test run with a fresh test database.
-	dbPath := filepath.Join("..", "..", "database", "test_words.db")
-
-	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
-		panic(fmt.Sprintf("Error removing old test database: %v", err))
-	}
-
-	database.InitDB(dbPath)
-
-	// Create the necessary tables and insert sample data
-	createTestTables()
-	insertTestData()
-
-	// Create a new Gin router
-	router = setupRouter()
-
-	// Run the tests
+	gin.SetMode(gin.TestMode)
 	os.Exit(m.Run())
 }
 
-func createTestTables() {
-	db := database.GetDB()
-	migrationPath := filepath.Join("..", "..", "migrations", "0001_init.sql")
-	migration, err := os.ReadFile(migrationPath)
-	if err != nil {
-		panic(fmt.Sprintf("Error reading migration file: %v", err))
-	}
-	_, err = db.Exec(string(migration))
-	if err != nil {
-		panic(fmt.Sprintf("Error executing migration: %v", err))
-	}
-}
+// newTestRouter gives the calling test its own freshly migrated SQLite
+// database (in t.TempDir, removed automatically) populated with one row per
+// table, and returns a router wired to it. It never touches database/*.db.
+//
+// The handlers read the package-level database.DB, so each call re-points that
+// global at the new database. This keeps tests isolated as long as they run
+// serially, so tests in this package must not call t.Parallel().
+func newTestRouter(t *testing.T) *gin.Engine {
+	t.Helper()
 
-func insertTestData() {
+	database.InitDB(filepath.Join(t.TempDir(), "test_words.db"))
 	db := database.GetDB()
-	_, err := db.Exec(`INSERT INTO activities (name, thumbnail_url, description) VALUES ('Sample Activity', 'URL', 'This is an activity description')`)
-	if err != nil {
-		panic(fmt.Sprintf("Error inserting into activities table: %v", err))
+	t.Cleanup(func() { db.Close() })
+
+	migration, err := os.ReadFile(filepath.Join("..", "..", "migrations", "0001_init.sql"))
+	require.NoError(t, err, "reading migration file")
+	_, err = db.Exec(string(migration))
+	require.NoError(t, err, "executing migration")
+
+	fixtures := []string{
+		`INSERT INTO activities (name, thumbnail_url, description) VALUES ('Sample Activity', 'URL', 'This is an activity description')`,
+		`INSERT INTO words (target_word, english, parts) VALUES ('Sample Word', 'Sample Meaning', 'Sample Part')`,
+		`INSERT INTO groups (name) VALUES ('Sample Group')`,
+		`INSERT INTO sessions (group_id, activity_id) VALUES (1, 1)`,
+		`INSERT INTO words_groups (group_id, word_id) VALUES (1, 1)`,
+		`INSERT INTO review_words (session_id, word_id, correct) VALUES (1, 1, 1)`,
 	}
-	_, err = db.Exec(`INSERT INTO words (target_word, english, parts) VALUES ('Sample Word', 'Sample Meaning', 'Sample Part')`)
-	if err != nil {
-		panic(fmt.Sprintf("Error inserting into words table: %v", err))
+	for _, stmt := range fixtures {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err, "inserting fixture: %s", stmt)
 	}
-	_, err = db.Exec(`INSERT INTO groups (name) VALUES ('Sample Group')`)
-	if err != nil {
-		panic(fmt.Sprintf("Error inserting into groups table: %v", err))
-	}
-	_, err = db.Exec(`INSERT INTO sessions (group_id, activity_id) VALUES (1, 1)`)
-	if err != nil {
-		panic(fmt.Sprintf("Error inserting into sessions table: %v", err))
-	}
-	_, err = db.Exec(`INSERT INTO words_groups (group_id, word_id) VALUES (1, 1)`)
-	if err != nil {
-		panic(fmt.Sprintf("Error inserting into words_groups table: %v", err))
-	}
-	_, err = db.Exec(`INSERT INTO review_words (session_id, word_id, correct) VALUES (1, 1, 1)`)
-	if err != nil {
-		panic(fmt.Sprintf("Error inserting into review_words table: %v", err))
-	}
-	// Add more data insertion statements as needed
+
+	return setupRouter()
 }
 
 func setupRouter() *gin.Engine {
-	r := gin.Default()
+	r := gin.New()
 
 	// Define routes
 	r.GET("/api/dashboard/last_study_session", handlers.GetLastStudySession)
@@ -106,200 +82,132 @@ func setupRouter() *gin.Engine {
 	return r
 }
 
-// func TestGetLastStudySession(t *testing.T) {
-// 	req, _ := http.NewRequest("GET", "/api/dashboard/last_study_session", nil)
-// 	w := httptest.NewRecorder()
-// 	router.ServeHTTP(w, req)
-
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	// Add more assertions based on the expected response
-// }
-
-// func TestGetStudyProgress(t *testing.T) {
-// 	req, _ := http.NewRequest("GET", "/api/dashboard/study_progress", nil)
-// 	w := httptest.NewRecorder()
-// 	router.ServeHTTP(w, req)
-
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	// Add more assertions based on the expected response
-// }
-
-// func TestGetQuickStats(t *testing.T) {
-// 	req, _ := http.NewRequest("GET", "/api/dashboard/quick-stats", nil)
-// 	w := httptest.NewRecorder()
-// 	router.ServeHTTP(w, req)
-
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	// Add more assertions based on the expected response
-// }
-
-func TestGetActivities(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/activities", nil)
+// request performs a request against the router and returns the recorded response.
+func request(r *gin.Engine, method, path string) *httptest.ResponseRecorder {
+	req, _ := http.NewRequest(method, path, nil)
 	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	r.ServeHTTP(w, req)
+	return w
+}
 
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
+// countRows returns the number of rows in a table of the current test database.
+func countRows(t *testing.T, table string) int {
+	t.Helper()
+	var n int
+	require.NoError(t, database.GetDB().QueryRow("SELECT COUNT(*) FROM "+table).Scan(&n))
+	return n
+}
+
+func TestGetLastStudySession(t *testing.T) {
+	router := newTestRouter(t)
+
+	w := request(router, "GET", "/api/dashboard/last_study_session")
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
+
+	var body map[string]map[string]any
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.EqualValues(t, 1, body["session"]["id"])
+	assert.EqualValues(t, 1, body["session"]["group_id"])
+}
+
+func TestGetLastStudySessionEmpty(t *testing.T) {
+	router := newTestRouter(t)
+
+	// A learner with no study sessions yet is a normal state, not an error.
+	_, err := database.GetDB().Exec("DELETE FROM review_words")
+	require.NoError(t, err)
+	_, err = database.GetDB().Exec("DELETE FROM sessions")
+	require.NoError(t, err)
+
+	w := request(router, "GET", "/api/dashboard/last_study_session")
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `{"session": null}`, w.Body.String())
+}
+
+func TestGetActivities(t *testing.T) {
+	w := request(newTestRouter(t), "GET", "/api/activities")
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func TestGetActivityByID(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/activities/1", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/activities/1")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetActivitySessions(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/activities/1/sessions", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/activities/1/sessions")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
-// func TestCreateActivity(t *testing.T) {
-// 	req, _ := http.NewRequest("POST", "/api/activities", nil)
-// 	w := httptest.NewRecorder()
-// 	router.ServeHTTP(w, req)
-
-// 	assert.Equal(t, http.StatusCreated, w.Code)
-// 	// Add more assertions based on the expected response
-// }
-
 func TestGetWords(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/words", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/words")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetWordByID(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/words/1", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/words/1")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetGroups(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/groups", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/groups")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetGroupByID(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/groups/1", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/groups/1")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetGroupSessions(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/groups/1/sessions", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/groups/1/sessions")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetSessions(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/sessions", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/sessions")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetSessionByID(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/sessions/1", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/sessions/1")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestGetSessionWords(t *testing.T) {
-	req, _ := http.NewRequest("GET", "/api/sessions/1/words", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	fmt.Printf("Response: %s\n", w.Body.String())
-	fmt.Printf("HTTP Status: %d\n", w.Code)
-
+	w := request(newTestRouter(t), "GET", "/api/sessions/1/words")
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
 }
 
 func TestResetHistory(t *testing.T) {
-	req, _ := http.NewRequest("POST", "/api/reset_history", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	router := newTestRouter(t)
+
+	w := request(router, "POST", "/api/reset_history")
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
+	assert.Equal(t, 0, countRows(t, "sessions"))
+	assert.Equal(t, 0, countRows(t, "review_words"))
+	// Vocabulary is kept
+	assert.Equal(t, 1, countRows(t, "words"))
+	assert.Equal(t, 1, countRows(t, "groups"))
 }
 
 func TestFullReset(t *testing.T) {
-	req, _ := http.NewRequest("POST", "/api/full_reset", nil)
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
+	router := newTestRouter(t)
+
+	w := request(router, "POST", "/api/full_reset")
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	// Add more assertions based on the expected response
+	for _, table := range []string{"sessions", "review_words", "activities", "words_groups", "groups", "words"} {
+		assert.Equal(t, 0, countRows(t, table), table)
+	}
 }
 
-// func TestReviewWord(t *testing.T) {
-// 	req, _ := http.NewRequest("POST", "/api/sessions/1/words/1/review", nil)
-// 	w := httptest.NewRecorder()
-// 	router.ServeHTTP(w, req)
-
-// 	fmt.Printf("Response: %s\n", w.Body.String())
-// 	fmt.Printf("HTTP Status: %d\n", w.Code)
-
-// 	assert.Equal(t, http.StatusOK, w.Code)
-// 	// Add more assertions based on the expected response
-// }
+// Not enabled yet (they were already commented out before the test refactor):
+//
+// func TestGetStudyProgress(t *testing.T)   // GET  /api/dashboard/study_progress
+// func TestGetQuickStats(t *testing.T)      // GET  /api/dashboard/quick-stats
+// func TestCreateActivity(t *testing.T)     // POST /api/activities
+// func TestReviewWord(t *testing.T)         // POST /api/sessions/1/words/1/review

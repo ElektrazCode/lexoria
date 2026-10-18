@@ -1,328 +1,118 @@
-# Backend Building with Copilot
+# Language Portal – Go Backend
 
-### Prompt
+REST API for a vocabulary-learning portal, built with [Gin](https://github.com/gin-gonic/gin) and SQLite. The portal is **Greek-first** but the code is **language-neutral**: a word's learning-language text is stored in a generic `target_word` column (and exposed as `target_word` in the API), next to its `english` translation. Switching the portal to another language only requires new seed data.
 
-I need to build an api backend for my lang portal app. It should be saved under the directory @backend_go. You will find all of the technical requirement specifications in the @Backend_Technical_Specs.md file. First, I would like you to give me a summary of what you plan to do. Once I agree to the plan, we will walk through every point in your plan, step by step. You will explain each step first then when I agree you can go ahead and execute it.
+## Architecture
 
-### Plan Summary
-
-#### 1. Setup Project Structure
-- Ensure the project structure is organized as specified.
-- Create necessary directories and files.
-
-#### 2. Initialize Go Modules
-- Initialize the Go module for dependency management.
-- Add required dependencies (Gin, SQLite3).
-
-#### 3. Database Setup
-- Implement database initialization in database/database.go.
-- Create migration scripts to set up the database schema in migrations/0001_init.sql.
-#### 4. API Endpoints Implementation
-- Implement the following API endpoints in main.go and corresponding handler files:
-```text
-	- GET /api/dashboard/last_study_session
-	- GET /api/dashboard/study_progress
-	- GET /api/dashboard/quick-stats
-	- GET /api/activities
-	- GET /api/activities/:id
-	- GET /api/activities/:id/sessions
-	- POST /api/activities
-	- GET /api/words
-	- GET /api/words/:id
-	- GET /api/groups
-	- GET /api/groups/:id
-	- GET /api/groups/:id/words
-	- GET /api/groups/:id/sessions
-	- GET /api/sessions
-	- GET /api/sessions/:id
-	- GET /api/sessions/:id/words
-	- POST /api/reset_history
-	- POST /api/full_reset
-	- POST /api/sessions/:id/words/:word_id/review
 ```
-#### 5. Task Runner Setup
-- Implement tasks for initializing, migrating, and seeding the database.
-#### 6. Testing
-- Write unit tests for the API endpoints.
-- Ensure the API meets the specifications and works as expected.
+backend_go/
+├── main.go            # Gin server, route registration (port 8080)
+├── MageFile.go        # Mage tasks: init, migrate, seed
+├── database/
+│   └── database.go    # SQLite connection (words.db is generated locally, not tracked in git)
+├── handlers/          # HTTP handlers: dashboard, activities, words, groups, sessions
+├── models/            # Shared structs (Word, Group, Activity, Session, ...)
+├── migrations/        # SQL schema files (0001_init.sql)
+├── seeds/             # JSON seed data (Greek vocabulary)
+└── tests/apis/        # API tests (run against a throwaway SQLite database)
+```
 
-# Detailed Steps
+**Database tables:** `words`, `groups`, `words_groups` (word ↔ group), `activities`, `sessions`, `review_words`.
 
-## Step 1: Setup Project Structure
+## Prerequisites
 
-We will create the following directories and files:
+- Go 1.24+
+- A C compiler (`gcc`), required by the `go-sqlite3` driver (CGO)
+- No `sqlite3` command-line tool and no global Mage install are needed
 
-- backend_go
-    - main.go
-    - database/
-        - database.go
-    - handlers/
-        - dashboard.go
-        - activities.go
-        - words.go
-        - groups.go
-        - sessions.go
-    - migrations/
-        - 0001_init.sql
-    - seeds/
-        - words.json
-    - tasks/
-        - tasks.go
+All commands below are run from the `backend_go/` directory; database and seed paths are relative to it.
 
-### Explanation
+## Setup
 
-- `main.go`: The entry point of the application.
-- `database/database.go`: Contains the database initialization and connection logic.
-- `handlers/`: Contains the handler functions for the API endpoints.
-- `migrations/`: Contains the SQL migration files to set up the database schema.
-- `seeds/`: Contains the seed data files.
-- `tasks/tasks.go`: Contains the task runner logic for initializing, migrating, and seeding the database.
-
-### Execution
 ```sh
-- mkdir -p backend_go/database
-- mkdir -p backend_go/handlers
-- mkdir -p backend_go/migrations
-- mkdir -p backend_go/seeds
-- mkdir -p backend_go/tasks
+cd lang-portal/backend_go
 
-- touch backend_go/main.go
-- touch backend_go/database/database.go
-- touch backend_go/handlers/dashboard.go
-- touch backend_go/handlers/activities.go
-- touch backend_go/handlers/words.go
-- touch backend_go/handlers/groups.go
-- touch backend_go/handlers/sessions.go
-- touch backend_go/migrations/0001_init.sql
-- touch backend_go/seeds/words.json
-- touch backend_go/tasks/tasks.go
+# 1. Create database/words.db and apply the schema
+go run github.com/magefile/mage init
+
+# 2. Load the Greek starter data
+go run github.com/magefile/mage seed
 ```
 
-## Step 2: Initialize Go Modules
+(If you have installed Mage globally, `mage init` / `mage seed` work too.)
 
-### Explanation
+| Task         | What it does |
+|--------------|--------------|
+| `mage init`  | Creates `database/words.db` if missing and applies the migrations. This is the default task. |
+| `mage migrate` | Applies every `migrations/*.sql` file in name order (`init` runs the same logic). |
+| `mage seed`  | Runs `init`, then loads the seed data. |
 
-1. Initialize the Go module for dependency management: This will create a go.mod file to manage dependencies.
-2. Add required dependencies: We will add the necessary dependencies for the project, including Gin and SQLite3.
+### Seeding
 
-### Execution
+Seeding is **idempotent and transactional**: it can be run any number of times without creating duplicates, and if any step fails nothing is written. Rows are matched by natural key:
+
+- words by `target_word` + `english`
+- groups and activities by `name`
+- word ↔ group links by name (`seeds/words_groups.json` refers to words by `target_word` and groups by `group`, never by numeric ID)
+
+The MVP seed contains 12 Greek words in a single group, **Everyday Essentials**, plus three activities. No study sessions or review history are seeded; a new learner starts with none.
+
+Seeding only ever adds rows. It does not update or remove rows that already exist.
+
+### Migrations
+
+`0001_init.sql` uses `CREATE TABLE IF NOT EXISTS`, so running migrations repeatedly is safe. **Applied migrations are not tracked yet**: every run re-executes every file. That is fine for the current single idempotent migration, but before adding a second migration (e.g. an `ALTER TABLE`) a proper version-tracking mechanism (such as a `schema_migrations` table) must be introduced.
+
+### Resetting the database (destructive)
+
+Deleting or recreating `database/words.db` **permanently destroys all data in it**, including study history. Back it up first:
+
 ```sh
-- cd backend_go
-- go mod init backend_go
-- go get -u github.com/gin-gonic/gin
-- go get -u github.com/mattn/- go-sqlite3
+cp database/words.db database/words.backup.db
+rm database/words.db
+go run github.com/magefile/mage seed
 ```
 
-## Step 3: Database Setup
+All `database/*.db` files are git-ignored, so they are never committed (and never restored by git).
 
-### Explanation
+A database created before the Greek migration may still contain the old `french` column. `init` will not alter an existing table; back it up and recreate it as above.
 
-1. Implement database initialization: We will create a database.go file to handle the database connection and initialization.
-2. Create migration scripts: We will create a migration script 0001_init.sql to set up the database schema.
+## Running the server
 
-### Execution
-
-1. Create database.go (check file for content)
-2. Create 0001_init.sql (check file for content)
-
-### Step 4: API Endpoints Implementation
-We will implement the following API endpoints in main.go and corresponding handler files:
 ```sh
-	- GET /api/dashboard/last_study_session
-	- GET /api/dashboard/study_progress
-	- GET /api/dashboard/quick-stats
-	- GET /api/activities
-	- GET /api/activities/:id
-	- GET /api/activities/:id/sessions
-	- POST /api/activities
-	- GET /api/words
-	- GET /api/words/:id
-	- GET /api/groups
-	- GET /api/groups/:id
-	- GET /api/groups/:id/words
-	- GET /api/groups/:id/sessions
-	- GET /api/sessions
-	- GET /api/sessions/:id
-	- GET /api/sessions/:id/words
-	- POST /api/reset_history
-	- POST /api/full_reset
-	- POST /api/sessions/:id/words/:word_id/review
+go run .
 ```
-We will start by setting up the basic structure in main.go and then implement each handler function in the corresponding files.
 
-### Execution
+The API listens on `http://localhost:8080`. CORS currently allows all origins.
 
-1. Setup basic structure in main.go:
-	- Create the main.go file (Check file for content)
-		- Initilize the database
-		- Create a new Gin router
-		- Define all routes
-		- Start the server
-2. Implement handler functions
-	- Create the handler files. (Check files for content)
-		1. `/dashboard.go` handlers:
-			- GetLastStudySession 
-			- GetStudyProgress
-			- GetQuickStats
-		2. `/activities.go` handlers:
-			- GetActivities
-			- GetActivityByID
-			- GetActivitySessions
-			- CreateActivity
-		3. `/words.go` handlers:
-			- GetWords
-			- GetWordByID
-		4. `/groups.go`
-			- GetGroups
-			- GetGroupByID
-			- GetGroupWords
-			- GetGroupSessions
-		5. `/sessions.go` handlers:
-			- GetSessions
-			- GetSessionByID
-			- GetSessionWords
-			- ResetHistory
-			- FullReset
-			- ReviewWord
+## Testing
 
-## Step 4: Task Runner Setup
-
-### Explanation
-
-We will implement tasks for initializing, migrating, and seeding the database using Mage, a task runner for Go.
-
-### Execution
-
-1. Setup Mage:
-	- Install Mage if it is not already installed:
-		- if says "no required module provide package"
-		```sh
-			go get github.com/magefile/mage
-		```
-
-2. Create Magefile:
-	- Create a Magefile.go in the tasks directory (Check file for content).
-
-3. Run Mage tasks:
-	- Run the Mage tasks to initialize and seed the database:
-	```sh
-		- cd backend_go
-		- mage init
-		- mage seed
-		- mage migrate
-	```
-
-# Missed Steps
-
-## 1. Generate data for the Seed File:
-
-### Prompt
-
-Could you please generate the top 100 beginner level french vocabulary words in json format like the following:
 ```sh
-{
-	french: french_word,
-	english: english_translation,
-	parts: part_of_speech,
-} 
-```
-### Execution
-
-Check Words.json content for result.
-
-## 2. Complete the Implementation of the Seed Function
-
-### Explanation
-
-To complete the Seed function, you need to:
-
-1. Read the seed data from the JSON files in the seeds folder.
-2. Parse the JSON data.
-3. Insert the parsed data into the appropriate tables in the SQLite database.
-
-
-### Execution 
-
-Check the `MageFile.go` file to see the content of the `Seed()` function.
-
-## 3. Complete the Implementation of the Migrate() Function
-
-### Explanation
-
-To complete the implementation of the Migrate function in the `MageFile.go` file, you need to add logic to run the migration scripts located in the migrations folder. These scripts will set up the database schema as specified in the `Backend_Technical_Specs.md` file.
-
-This updated Migrate function does the following:
-
-1. Ensures the database is initialized by calling the Init function.
-2. Retrieves the list of migration files from the migrations folder.
-3. Opens the SQLite database.
-4. Reads and executes each migration file in order.
-
-### Execution 
-
-Check the `MageFile.go` file to see the content of the `Migrate()` function.
-
-# Suggested Optimizations
-
-The project appears to be well-structured and includes the necessary files and directories as outlined in the `Readme.md` and `Backend_Technical_Specs.md`. However, there are a few potential areas that might need attention:
-
-#### Unit Tests:
-There are no unit tests mentioned or included in the provided files. Adding unit tests for the API endpoints would be beneficial to ensure the API meets the specifications and works as expected.
-
-#### Error Handling:
-While the handlers include basic error handling, you might want to ensure that all possible errors are handled gracefully and consistently across the application.
-
-#### Logging:
-Consider adding more detailed logging throughout the application to help with debugging and monitoring.
-
-#### Configuration Management:
-If there are any configuration settings (e.g., database connection strings, server ports), it might be useful to externalize these into a configuration file or environment variables.
-
-#### Documentation:
-Ensure that the documentation is complete and up-to-date, including any additional setup steps, usage instructions, and API documentation.
-
-#### Security:
-Although the specs mention no authentication/authorization, consider if there are any other security measures needed, such as input validation to prevent SQL injection.
-
-#### Pagination and Filtering:
-The API endpoints for listing resources (e.g., /api/words, /api/groups) should support pagination and filtering to handle large datasets efficiently.
-
-#### Performance Optimization:
-Review the database queries and application logic for any potential performance bottlenecks.
-
-# Testing
-
-## Postman Extension in VSCode
-I used the Postman extension to manually test all of the api endpoints.
-
-For the time being, I still need to work out the logic for the dashboard and the word review. Otherwise, all of the apis were tested successfully.
-
-## Using Copilot to generate Unit Tests
-
-### Prompt
-I would like to add unit tests in the directory tests/apis to test all of the api endpoints. You will find all api handlers in the backend_go/handlers directory. Could you walk me through each step? Explain to me what needs to be done, then after I approve you can go ahead and implement it.
-
-### Response
-1. Create a new directory for tests: We'll create a new directory named `tests/apis` inside the `backend_go` directory to store our test files.
-
-2. Set up the test environment: We'll need to set up a test environment using the testing package in Go. This includes initializing a test database and creating a test router.
-- Created the File `api_test.go`
-	- This file sets up the test environment by initializing a test database and creating a test router with all the routes defined.
-- Install testify
-```sh
-	go get github.com/stretchr/testify/assert
+go test ./...
 ```
 
-3. Write test cases for each endpoint: For each API endpoint, we'll write test cases to verify the expected behavior. This includes sending HTTP requests to the endpoints and checking the responses.
+The API tests create a throwaway SQLite database in a temporary directory from `migrations/0001_init.sql` and delete it when they finish. They never touch `database/*.db`, so tests are reproducible and safe to run next to a real `words.db`.
 
-4. Run the tests: Finally, we'll run the tests to ensure everything is working as expected.
+## API overview
 
-# Missed Steps
-
-- Create the test_database, sample data, function to insert the sample data into the test_database.
-
-- The tables were not matching the schema. I had to manually revise the insert queries to use the correct columns.
-
-- Only 2 test cases were created for 2 endpoints. I had to ask for the remaining test cases to be done.
-
-- The output was not clear I had to add some print lines to get more information about the reponse of each request.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/dashboard/last_study_session` | Most recent session as `{"session": {...}}`, or `{"session": null}` if there are none yet |
+| GET | `/api/dashboard/study_progress` | Total sessions and words |
+| GET | `/api/dashboard/quick-stats` | Total words and groups |
+| GET | `/api/activities` | List activities |
+| GET | `/api/activities/:id` | One activity |
+| GET | `/api/activities/:id/sessions` | Sessions for an activity |
+| POST | `/api/activities` | Create an activity |
+| GET | `/api/words` | List words (`id`, `target_word`, `english`, `parts`) |
+| GET | `/api/words/:id` | One word |
+| GET | `/api/groups` | List groups |
+| GET | `/api/groups/:id` | One group |
+| GET | `/api/groups/:id/words` | Words in a group |
+| GET | `/api/groups/:id/sessions` | Sessions for a group |
+| GET | `/api/sessions` | List sessions |
+| GET | `/api/sessions/:id` | One session |
+| GET | `/api/sessions/:id/words` | Words reviewed in a session |
+| POST | `/api/sessions/:id/words/:word_id/review` | Record a word review |
+| POST | `/api/reset_history` | Clear study history (destructive) |
+| POST | `/api/full_reset` | Clear all data (destructive) |

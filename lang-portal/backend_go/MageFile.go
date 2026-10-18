@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/magefile/mage/mg"
@@ -19,61 +18,60 @@ import (
 // Default target to run when none is specified
 var Default = Init
 
-// Initialize the database
-func Init() error {
-	fmt.Println("Initializing database...")
+const (
+	dbDir  = "database"
+	dbName = "words.db"
+)
 
-	cmd := exec.Command("sh", "-c", "sqlite3 database/words.db < migrations/0001_init.sql")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		fmt.Printf("Error initializing database: %v\n", err)
-		return err
-	}
-	fmt.Println("Database initialized successfully.")
-	return nil
+// wordGroupSeed links a word to a group by name, so seeding does not depend
+// on auto-generated IDs.
+type wordGroupSeed struct {
+	TargetWord string `json:"target_word"`
+	Group      string `json:"group"`
 }
 
-// Seed the database
+// Initialize the database (creates the file and applies the schema)
+func Init() error {
+	fmt.Println("Initializing database...")
+	return Migrate()
+}
+
+// Seed the database. Safe to run repeatedly: existing rows are skipped and
+// the whole seed runs in a single transaction (all or nothing).
 func Seed() error {
 	fmt.Println("Seeding database...")
 
-	// Open the database
-	dbFile := filepath.Join("database", "words.db")
-	db, err := sql.Open("sqlite3", dbFile)
+	// Ensure the schema exists
+	mg.Deps(Init)
+
+	db, err := openDB()
 	if err != nil {
-		fmt.Printf("Error opening database: %v\n", err)
 		return err
 	}
 	defer db.Close()
 
-	// Seed Words
-	if err := seedWords(db); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
+		fmt.Printf("Error starting transaction: %v\n", err)
 		return err
 	}
+	// No-op after a successful Commit
+	defer tx.Rollback()
 
-	// Seed Groups
-	if err := seedGroups(db); err != nil {
-		return err
+	steps := []func(*sql.Tx) error{
+		seedWords,
+		seedGroups,
+		seedWordsGroups,
+		seedActivities,
+	}
+	for _, step := range steps {
+		if err := step(tx); err != nil {
+			return err
+		}
 	}
 
-	// Seed Words Groups
-	if err := seedWordsGroups(db); err != nil {
-		return err
-	}
-
-	// Seed Activities
-	if err := seedActivities(db); err != nil {
-		return err
-	}
-
-	// Seed Sessions
-	if err := seedSessions(db); err != nil {
-		return err
-	}
-
-	// Seed WordReview
-	if err := wordReview(db); err != nil {
+	if err := tx.Commit(); err != nil {
+		fmt.Printf("Error committing seed data: %v\n", err)
 		return err
 	}
 
@@ -81,24 +79,24 @@ func Seed() error {
 	return nil
 }
 
-func seedWords(db *sql.DB) error {
-	wordSeedFile := filepath.Join("seeds", "words.json")
-	data, err := os.ReadFile(wordSeedFile)
-	if err != nil {
-		fmt.Printf("Error reading seed file: %v\n", err)
-		return err
-	}
-
+func seedWords(tx *sql.Tx) error {
 	var words []models.Word
-
-	if err := json.Unmarshal(data, &words); err != nil {
-		fmt.Printf("Error parsing JSON data: %v\n", err)
+	if err := readSeed("words.json", &words); err != nil {
 		return err
 	}
 
 	for _, word := range words {
-		_, err := db.Exec("INSERT INTO words (target_word, english, parts) VALUES (?, ?, ?)", word.TargetWord, word.English, word.Parts)
+		var exists bool
+		err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM words WHERE target_word = ? AND english = ?)", word.TargetWord, word.English).Scan(&exists)
 		if err != nil {
+			fmt.Printf("Error checking if word exists: %v\n", err)
+			return err
+		}
+		if exists {
+			continue
+		}
+
+		if _, err := tx.Exec("INSERT INTO words (target_word, english, parts) VALUES (?, ?, ?)", word.TargetWord, word.English, word.Parts); err != nil {
 			fmt.Printf("Error inserting data into database: %v\n", err)
 			return err
 		}
@@ -106,61 +104,24 @@ func seedWords(db *sql.DB) error {
 	return nil
 }
 
-func seedGroups(db *sql.DB) error {
-	groupSeedFile := filepath.Join("seeds", "groups.json")
-	data, err := os.ReadFile(groupSeedFile)
-	if err != nil {
-		fmt.Printf("Error reading seed file: %v\n", err)
-		return err
-	}
-
+func seedGroups(tx *sql.Tx) error {
 	var groups []models.Group
-
-	if err := json.Unmarshal(data, &groups); err != nil {
-		fmt.Printf("Error parsing JSON data: %v\n", err)
+	if err := readSeed("groups.json", &groups); err != nil {
 		return err
 	}
 
 	for _, group := range groups {
-		// Check if the group already exists
 		var exists bool
-		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE name = ?)", group.Name).Scan(&exists)
+		err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM groups WHERE name = ?)", group.Name).Scan(&exists)
 		if err != nil {
 			fmt.Printf("Error checking if group exists: %v\n", err)
 			return err
 		}
-
-		if !exists {
-			_, err := db.Exec("INSERT INTO groups (name) VALUES (?)", group.Name)
-			if err != nil {
-				fmt.Printf("Error inserting data into database: %v\n", err)
-				return err
-			}
-		} else {
-			fmt.Printf("Group '%s' already exists, skipping insert.\n", group.Name)
+		if exists {
+			continue
 		}
-	}
-	return nil
-}
 
-func seedWordsGroups(db *sql.DB) error {
-	wordGroupSeedFile := filepath.Join("seeds", "words_groups.json")
-	data, err := os.ReadFile(wordGroupSeedFile)
-	if err != nil {
-		fmt.Printf("Error reading seed file: %v\n", err)
-		return err
-	}
-
-	var wordsGroups []models.WordGroup
-
-	if err := json.Unmarshal(data, &wordsGroups); err != nil {
-		fmt.Printf("Error parsing JSON data: %v\n", err)
-		return err
-	}
-
-	for _, wordGroup := range wordsGroups {
-		_, err := db.Exec("INSERT INTO words_groups (word_id, group_id) VALUES (?, ?)", wordGroup.WordID, wordGroup.GroupID)
-		if err != nil {
+		if _, err := tx.Exec("INSERT INTO groups (name) VALUES (?)", group.Name); err != nil {
 			fmt.Printf("Error inserting data into database: %v\n", err)
 			return err
 		}
@@ -168,24 +129,61 @@ func seedWordsGroups(db *sql.DB) error {
 	return nil
 }
 
-func seedActivities(db *sql.DB) error {
-	activitySeedFile := filepath.Join("seeds", "activities.json")
-	data, err := os.ReadFile(activitySeedFile)
-	if err != nil {
-		fmt.Printf("Error reading seed file: %v\n", err)
+func seedWordsGroups(tx *sql.Tx) error {
+	var links []wordGroupSeed
+	if err := readSeed("words_groups.json", &links); err != nil {
 		return err
 	}
 
-	var activities []models.Activity
+	for _, link := range links {
+		var wordID, groupID int
+		err := tx.QueryRow("SELECT id FROM words WHERE target_word = ? ORDER BY id LIMIT 1", link.TargetWord).Scan(&wordID)
+		if err != nil {
+			fmt.Printf("Error finding word '%s': %v\n", link.TargetWord, err)
+			return err
+		}
+		err = tx.QueryRow("SELECT id FROM groups WHERE name = ?", link.Group).Scan(&groupID)
+		if err != nil {
+			fmt.Printf("Error finding group '%s': %v\n", link.Group, err)
+			return err
+		}
 
-	if err := json.Unmarshal(data, &activities); err != nil {
-		fmt.Printf("Error parsing JSON data: %v\n", err)
+		var exists bool
+		err = tx.QueryRow("SELECT EXISTS(SELECT 1 FROM words_groups WHERE word_id = ? AND group_id = ?)", wordID, groupID).Scan(&exists)
+		if err != nil {
+			fmt.Printf("Error checking if word-group link exists: %v\n", err)
+			return err
+		}
+		if exists {
+			continue
+		}
+
+		if _, err := tx.Exec("INSERT INTO words_groups (word_id, group_id) VALUES (?, ?)", wordID, groupID); err != nil {
+			fmt.Printf("Error inserting data into database: %v\n", err)
+			return err
+		}
+	}
+	return nil
+}
+
+func seedActivities(tx *sql.Tx) error {
+	var activities []models.Activity
+	if err := readSeed("activities.json", &activities); err != nil {
 		return err
 	}
 
 	for _, activity := range activities {
-		_, err := db.Exec("INSERT INTO activities (name, thumbnail_url, description) VALUES (?, ?, ?)", activity.Name, activity.ThumbnailURL, activity.Description)
+		var exists bool
+		err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM activities WHERE name = ?)", activity.Name).Scan(&exists)
 		if err != nil {
+			fmt.Printf("Error checking if activity exists: %v\n", err)
+			return err
+		}
+		if exists {
+			continue
+		}
+
+		if _, err := tx.Exec("INSERT INTO activities (name, thumbnail_url, description) VALUES (?, ?, ?)", activity.Name, activity.ThumbnailURL, activity.Description); err != nil {
 			fmt.Printf("Error inserting data into database: %v\n", err)
 			return err
 		}
@@ -193,80 +191,24 @@ func seedActivities(db *sql.DB) error {
 	return nil
 }
 
-func seedSessions(db *sql.DB) error {
-	sessionSeedFile := filepath.Join("seeds", "sessions.json")
-	data, err := os.ReadFile(sessionSeedFile)
-	if err != nil {
-		fmt.Printf("Error reading seed file: %v\n", err)
-		return err
-	}
-
-	var sessions []models.Session
-
-	if err := json.Unmarshal(data, &sessions); err != nil {
-		fmt.Printf("Error parsing JSON data: %v\n", err)
-		return err
-	}
-
-	for _, session := range sessions {
-		_, err := db.Exec("INSERT INTO sessions (activity_id, group_id, created_at, ended_at) VALUES (?, ?, ?, ?)", session.ActivityID, session.GroupID, session.CreatedAt, session.EndedAt)
-		if err != nil {
-			fmt.Printf("Error inserting data into database: %v\n", err)
-			return err
-		}
-	}
-	return nil
-}
-
-func wordReview(db *sql.DB) error {
-	wordReviewSeedFile := filepath.Join("seeds", "word_review.json")
-	data, err := os.ReadFile(wordReviewSeedFile)
-	if err != nil {
-		fmt.Printf("Error reading seed file: %v\n", err)
-		return err
-	}
-
-	var wordReviews []models.WordReview
-
-	if err := json.Unmarshal(data, &wordReviews); err != nil {
-		fmt.Printf("Error parsing JSON data: %v\n", err)
-		return err
-	}
-
-	for _, wordReview := range wordReviews {
-		_, err := db.Exec("INSERT INTO review_words (word_id, session_id, correct, created_at) VALUES (?, ?, ?, ?)", wordReview.WordID, wordReview.SessionID, wordReview.Correct, wordReview.CreatedAt)
-		if err != nil {
-			fmt.Printf("Error inserting data into database: %v\n", err)
-			return err
-		}
-	}
-	return nil
-}
-
-// Migrate the database
+// Migrate the database: applies every migrations/*.sql file in name order.
+// Migrations must be idempotent (CREATE ... IF NOT EXISTS) because applied
+// versions are not tracked yet.
 func Migrate() error {
 	fmt.Println("Migrating database...")
 
-	// Ensure the database is initialized
-	mg.Deps(Init)
-
-	// Get the list of migration files
 	migrationFiles, err := filepath.Glob("migrations/*.sql")
 	if err != nil {
 		fmt.Printf("Error getting migration files: %v\n", err)
 		return err
 	}
 
-	// Open the database
-	dbFile := filepath.Join("database", "words.db")
-	db, err := sql.Open("sqlite3", dbFile)
+	db, err := openDB()
 	if err != nil {
-		fmt.Printf("Error opening database: %v\n", err)
 		return err
 	}
 	defer db.Close()
 
-	// Execute each migration file
 	for _, file := range migrationFiles {
 		fmt.Printf("Running migration: %s\n", file)
 		content, err := os.ReadFile(file)
@@ -275,13 +217,41 @@ func Migrate() error {
 			return err
 		}
 
-		_, err = db.Exec(string(content))
-		if err != nil {
+		if _, err = db.Exec(string(content)); err != nil {
 			fmt.Printf("Error executing migration file: %v\n", err)
 			return err
 		}
 	}
 
 	fmt.Println("Database migrated successfully.")
+	return nil
+}
+
+// openDB opens database/words.db, creating the directory if needed.
+func openDB() (*sql.DB, error) {
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		fmt.Printf("Error creating database directory: %v\n", err)
+		return nil, err
+	}
+
+	db, err := sql.Open("sqlite3", filepath.Join(dbDir, dbName))
+	if err != nil {
+		fmt.Printf("Error opening database: %v\n", err)
+		return nil, err
+	}
+	return db, nil
+}
+
+// readSeed loads seeds/<name> into v.
+func readSeed(name string, v any) error {
+	data, err := os.ReadFile(filepath.Join("seeds", name))
+	if err != nil {
+		fmt.Printf("Error reading seed file: %v\n", err)
+		return err
+	}
+	if err := json.Unmarshal(data, v); err != nil {
+		fmt.Printf("Error parsing JSON data: %v\n", err)
+		return err
+	}
 	return nil
 }
