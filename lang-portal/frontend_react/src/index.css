@@ -1,3 +1,54 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/*
+  Design tokens for Gates of Lexoria: a warm fantasy library.
+  Every --color-* / --font-* variable below becomes a Tailwind utility,
+  e.g. bg-parchment-100, text-burgundy-700, border-sage-300, font-display.
+*/
+@theme {
+  /* Parchment: page and card backgrounds */
+  --color-parchment-50: #fbf7ee;
+  --color-parchment-100: #f5ecd8;
+  --color-parchment-200: #ebdcbb;
+  --color-parchment-300: #dcc79a;
+  --color-parchment-400: #c9ac75;
+
+  /* Sage green: calm secondary accent, success states */
+  --color-sage-100: #e6ece1;
+  --color-sage-300: #b2c3a6;
+  --color-sage-500: #7d9871;
+  --color-sage-700: #546b4b;
+  --color-sage-900: #33422e;
+
+  /* Burgundy: primary accent, headings, call-to-action */
+  --color-burgundy-100: #f0dcdf;
+  --color-burgundy-300: #c98a95;
+  --color-burgundy-500: #9a4152;
+  --color-burgundy-700: #6e2433;
+  --color-burgundy-900: #45141f;
+
+  /* Ink: body text on parchment */
+  --color-ink-600: #5e5246;
+  --color-ink-800: #3a3128;
+  --color-ink-900: #261f19;
+
+  /* Fonts (loaded in index.html); both cover Greek except Cinzel, so use it for Latin headings only */
+  --font-display: "Cinzel", "EB Garamond", Georgia, serif;
+  --font-body: "EB Garamond", Georgia, "Times New Roman", serif;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-parchment-100);
+    color: var(--color-ink-800);
+    font-family: var(--font-body);
+    font-size: 1.125rem;
+    line-height: 1.6;
+  }
+
+  /* Visible keyboard focus everywhere; the dark header overrides the colour locally */
+  :focus-visible {
+    outline: 2px solid var(--color-burgundy-500);
+    outline-offset: 2px;
+  }
+}
