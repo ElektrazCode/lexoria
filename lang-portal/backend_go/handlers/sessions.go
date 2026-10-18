@@ -69,36 +69,6 @@ func GetSessionWords(c *gin.Context) {
 	c.JSON(http.StatusOK, words)
 }
 
-func ResetHistory(c *gin.Context) {
-	_, err := database.DB.Exec("DELETE FROM sessions")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	_, err = database.DB.Exec("DELETE FROM review_words")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "History reset successfully"})
-}
-
-func FullReset(c *gin.Context) {
-	tables := []string{"sessions", "review_words", "activities", "words_groups", "groups", "words"}
-
-	for _, table := range tables {
-		_, err := database.DB.Exec("DELETE FROM " + table)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "Full reset successfully"})
-}
-
 func ReviewWord(c *gin.Context) {
 	sessionID := c.Param("id")
 	wordID := c.Param("word_id")

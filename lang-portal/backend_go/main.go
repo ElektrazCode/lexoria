@@ -2,11 +2,17 @@ package main
 
 import (
 	"backend_go/database"
-	"backend_go/handlers"
+	"backend_go/router"
+	"os"
 	"path/filepath"
+	"strings"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	// Localhost only by default; set SERVER_ADDR (e.g. ":8080") to listen on other interfaces.
+	defaultAddr = "127.0.0.1:8080"
 )
 
 func main() {
@@ -14,36 +20,34 @@ func main() {
 	dbPath := filepath.Join("database", "words.db")
 	database.InitDB(dbPath)
 
-	// Create a new Gin router
-	r := gin.Default()
-
-	// Configure CORS middleware
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"},
-		AllowCredentials: true,
-	}))
-
-	// Define routes
-	r.GET("/api/dashboard/last_study_session", handlers.GetLastStudySession)
-	r.GET("/api/dashboard/study_progress", handlers.GetStudyProgress)
-	r.GET("/api/dashboard/quick-stats", handlers.GetQuickStats)
-	r.GET("/api/activities", handlers.GetActivities)
-	r.GET("/api/activities/:id", handlers.GetActivityByID)
-	r.GET("/api/activities/:id/sessions", handlers.GetActivitySessions)
-	r.POST("/api/activities", handlers.CreateActivity)
-	r.GET("/api/words", handlers.GetWords)
-	r.GET("/api/words/:id", handlers.GetWordByID)
-	r.GET("/api/groups", handlers.GetGroups)
-	r.GET("/api/groups/:id", handlers.GetGroupByID)
-	r.GET("/api/groups/:id/words", handlers.GetGroupWords)
-	r.GET("/api/groups/:id/sessions", handlers.GetGroupSessions)
-	r.GET("/api/sessions", handlers.GetSessions)
-	r.GET("/api/sessions/:id", handlers.GetSessionByID)
-	r.GET("/api/sessions/:id/words", handlers.GetSessionWords)
-	r.POST("/api/reset_history", handlers.ResetHistory)
-	r.POST("/api/full_reset", handlers.FullReset)
-	r.POST("/api/sessions/:id/words/:word_id/review", handlers.ReviewWord)
+	r := router.New(allowedOrigins(), gin.Logger())
 
 	// Start the server
-	r.Run(":8080")
+	r.Run(envOr("SERVER_ADDR", defaultAddr))
+}
+
+// allowedOrigins returns the browser origins allowed by CORS: CORS_ORIGINS
+// (comma-separated) if set, otherwise the local Vite dev/preview servers.
+func allowedOrigins() []string {
+	value := os.Getenv("CORS_ORIGINS")
+	if value == "" {
+		return router.DefaultAllowedOrigins
+	}
+	var origins []string
+	for _, origin := range strings.Split(value, ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			origins = append(origins, origin)
+		}
+	}
+	if len(origins) == 0 {
+		return router.DefaultAllowedOrigins
+	}
+	return origins
+}
+
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }

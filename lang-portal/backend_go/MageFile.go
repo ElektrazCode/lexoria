@@ -227,6 +227,49 @@ func Migrate() error {
 	return nil
 }
 
+// ResetHistory deletes ALL study history (sessions and review results) but keeps the
+// vocabulary. Destructive: back up database/words.db first, then run `mage resetHistory yes`.
+func ResetHistory(confirm string) error {
+	return deleteAll(confirm, "review_words", "sessions")
+}
+
+// Reset deletes ALL data (vocabulary, groups, activities and history), leaving the empty schema.
+// Destructive: back up database/words.db first, then run `mage reset yes` and `mage seed`.
+func Reset(confirm string) error {
+	return deleteAll(confirm, "review_words", "sessions", "words_groups", "groups", "activities", "words")
+}
+
+// deleteAll empties the given tables in one transaction, but only when confirm is "yes".
+// The table names are fixed lists from this file, never user input.
+func deleteAll(confirm string, tables ...string) error {
+	if confirm != "yes" {
+		return fmt.Errorf("this permanently deletes data from %s; back it up, then pass the argument \"yes\"", filepath.Join(dbDir, dbName))
+	}
+
+	db, err := openDB()
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, table := range tables {
+		result, err := tx.Exec("DELETE FROM " + table)
+		if err != nil {
+			fmt.Printf("Error clearing %s: %v\n", table, err)
+			return err
+		}
+		rows, _ := result.RowsAffected()
+		fmt.Printf("Deleted %d rows from %s\n", rows, table)
+	}
+	return tx.Commit()
+}
+
 // openDB opens database/words.db, creating the directory if needed.
 func openDB() (*sql.DB, error) {
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {

@@ -2,12 +2,13 @@ package apis
 
 import (
 	"backend_go/database"
-	"backend_go/handlers"
+	"backend_go/router"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -52,34 +53,7 @@ func newTestRouter(t *testing.T) *gin.Engine {
 		require.NoError(t, err, "inserting fixture: %s", stmt)
 	}
 
-	return setupRouter()
-}
-
-func setupRouter() *gin.Engine {
-	r := gin.New()
-
-	// Define routes
-	r.GET("/api/dashboard/last_study_session", handlers.GetLastStudySession)
-	r.GET("/api/dashboard/study_progress", handlers.GetStudyProgress)
-	r.GET("/api/dashboard/quick-stats", handlers.GetQuickStats)
-	r.GET("/api/activities", handlers.GetActivities)
-	r.GET("/api/activities/:id", handlers.GetActivityByID)
-	r.GET("/api/activities/:id/sessions", handlers.GetActivitySessions)
-	r.POST("/api/activities", handlers.CreateActivity)
-	r.GET("/api/words", handlers.GetWords)
-	r.GET("/api/words/:id", handlers.GetWordByID)
-	r.GET("/api/groups", handlers.GetGroups)
-	r.GET("/api/groups/:id", handlers.GetGroupByID)
-	r.GET("/api/groups/:id/words", handlers.GetGroupWords)
-	r.GET("/api/groups/:id/sessions", handlers.GetGroupSessions)
-	r.GET("/api/sessions", handlers.GetSessions)
-	r.GET("/api/sessions/:id", handlers.GetSessionByID)
-	r.GET("/api/sessions/:id/words", handlers.GetSessionWords)
-	r.POST("/api/reset_history", handlers.ResetHistory)
-	r.POST("/api/full_reset", handlers.FullReset)
-	r.POST("/api/sessions/:id/words/:word_id/review", handlers.ReviewWord)
-
-	return r
+	return router.New(router.DefaultAllowedOrigins)
 }
 
 // request performs a request against the router and returns the recorded response.
@@ -181,28 +155,109 @@ func TestGetSessionWords(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestResetHistory(t *testing.T) {
-	router := newTestRouter(t)
+// The reset endpoints used to be callable over HTTP by anything that could reach the server
+// (including any web page open in the user's browser). They must stay gone.
+func TestResetEndpointsAreNotExposed(t *testing.T) {
+	r := newTestRouter(t)
+	tables := []string{"words", "groups", "words_groups", "activities", "sessions", "review_words"}
 
-	w := request(router, "POST", "/api/reset_history")
+	attempts := []struct {
+		name    string
+		method  string
+		path    string
+		headers map[string]string
+		want    int
+	}{
+		{"reset_history", "POST", "/api/reset_history", nil, http.StatusNotFound},
+		{"full_reset", "POST", "/api/full_reset", nil, http.StatusNotFound},
+		{"full_reset from the allowed dev origin", "POST", "/api/full_reset", map[string]string{"Origin": "http://localhost:5173"}, http.StatusNotFound},
+		{"full_reset via GET", "GET", "/api/full_reset", nil, http.StatusNotFound},
+		{"full_reset via DELETE", "DELETE", "/api/full_reset", nil, http.StatusNotFound},
+		{"full_reset via PUT", "PUT", "/api/full_reset", nil, http.StatusNotFound},
+		// A foreign origin is turned away by the CORS middleware before routing even happens
+		{"reset_history from a foreign origin", "POST", "/api/reset_history", map[string]string{"Origin": "http://evil.example"}, http.StatusForbidden},
+		{"full_reset from a foreign origin as text/plain (a CORS-simple request)", "POST", "/api/full_reset", map[string]string{"Origin": "http://evil.example", "Content-Type": "text/plain"}, http.StatusForbidden},
+	}
+	for _, attempt := range attempts {
+		req, _ := http.NewRequest(attempt.method, attempt.path, nil)
+		for key, value := range attempt.headers {
+			req.Header.Set(key, value)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 0, countRows(t, "sessions"))
-	assert.Equal(t, 0, countRows(t, "review_words"))
-	// Vocabulary is kept
-	assert.Equal(t, 1, countRows(t, "words"))
-	assert.Equal(t, 1, countRows(t, "groups"))
+		assert.Equal(t, attempt.want, w.Code, attempt.name)
+	}
+
+	for _, table := range tables {
+		assert.Equal(t, 1, countRows(t, table), "%s must be untouched", table)
+	}
 }
 
-func TestFullReset(t *testing.T) {
-	router := newTestRouter(t)
-
-	w := request(router, "POST", "/api/full_reset")
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	for _, table := range []string{"sessions", "review_words", "activities", "words_groups", "groups", "words"} {
-		assert.Equal(t, 0, countRows(t, table), table)
+// Guards the invariant behind the test above: nothing in the router can delete or replace data.
+func TestRouterHasNoDestructiveRoutes(t *testing.T) {
+	for _, route := range newTestRouter(t).Routes() {
+		assert.Contains(t, []string{"GET", "POST"}, route.Method, "%s %s", route.Method, route.Path)
+		assert.NotContains(t, strings.ToLower(route.Path), "reset", "%s %s", route.Method, route.Path)
 	}
+}
+
+func TestCORSOnlyAllowsConfiguredOrigins(t *testing.T) {
+	r := newTestRouter(t)
+	get := func(origin string) *httptest.ResponseRecorder {
+		req, _ := http.NewRequest("GET", "/api/words", nil)
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w
+	}
+
+	allowed := get("http://localhost:5173")
+	assert.Equal(t, http.StatusOK, allowed.Code)
+	assert.Equal(t, "http://localhost:5173", allowed.Header().Get("Access-Control-Allow-Origin"))
+
+	foreign := get("http://evil.example")
+	assert.Empty(t, foreign.Header().Get("Access-Control-Allow-Origin"), "a foreign origin must not be allowed to read responses")
+	assert.NotEqual(t, "*", foreign.Header().Get("Access-Control-Allow-Origin"))
+	assert.Empty(t, foreign.Header().Get("Access-Control-Allow-Credentials"))
+
+	// Same-origin requests (the Vite proxy) carry no Origin header and keep working
+	assert.Equal(t, http.StatusOK, get("").Code)
+}
+
+// The remaining write routes only insert rows, but a foreign web page must not be able to
+// trigger them either. (This is a browser-side defence, not authentication: the server is
+// also bound to localhost by default.)
+func TestWriteRoutesRejectForeignOrigins(t *testing.T) {
+	r := newTestRouter(t)
+	post := func(origin string) int {
+		req, _ := http.NewRequest("POST", "/api/activities", strings.NewReader(`{"name":"Injected","thumbnail_url":"","description":""}`))
+		req.Header.Set("Content-Type", "text/plain") // a CORS-simple request: no preflight
+		req.Header.Set("Origin", origin)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return w.Code
+	}
+
+	assert.Equal(t, http.StatusForbidden, post("http://evil.example"))
+	assert.Equal(t, 1, countRows(t, "activities"), "a foreign origin must not insert anything")
+
+	assert.Equal(t, http.StatusOK, post("http://localhost:5173"))
+	assert.Equal(t, 2, countRows(t, "activities"), "the allowed dev origin can still write")
+}
+
+func TestCORSPreflightFromForeignOriginIsRejected(t *testing.T) {
+	req, _ := http.NewRequest("OPTIONS", "/api/activities", nil)
+	req.Header.Set("Origin", "http://evil.example")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "content-type")
+	w := httptest.NewRecorder()
+	newTestRouter(t).ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+	assert.Empty(t, w.Header().Get("Access-Control-Allow-Origin"))
 }
 
 // Not enabled yet (they were already commented out before the test refactor):

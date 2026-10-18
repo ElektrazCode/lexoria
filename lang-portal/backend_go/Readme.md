@@ -6,8 +6,9 @@ REST API for a vocabulary-learning portal, built with [Gin](https://github.com/g
 
 ```
 backend_go/
-├── main.go            # Gin server, route registration (port 8080)
-├── MageFile.go        # Mage tasks: init, migrate, seed
+├── main.go            # Server start-up: address and CORS settings from the environment
+├── router/            # Route table and CORS rules (shared by main.go and the tests)
+├── MageFile.go        # Mage tasks: init, migrate, seed, reset, resetHistory
 ├── database/
 │   └── database.go    # SQLite connection (words.db is generated locally, not tracked in git)
 ├── handlers/          # HTTP handlers: dashboard, activities, words, groups, sessions
@@ -46,6 +47,8 @@ go run github.com/magefile/mage seed
 | `mage init`  | Creates `database/words.db` if missing and applies the migrations. This is the default task. |
 | `mage migrate` | Applies every `migrations/*.sql` file in name order (`init` runs the same logic). |
 | `mage seed`  | Runs `init`, then loads the seed data. |
+| `mage resetHistory yes` | **Destructive.** Deletes all sessions and review results; keeps the vocabulary. |
+| `mage reset yes` | **Destructive.** Deletes all data (words, groups, activities, history); keeps the empty tables. Run `mage seed` afterwards to reload the starter data. |
 
 ### Seeding
 
@@ -65,15 +68,19 @@ Seeding only ever adds rows. It does not update or remove rows that already exis
 
 ### Resetting the database (destructive)
 
-Deleting or recreating `database/words.db` **permanently destroys all data in it**, including study history. Back it up first:
+Resetting is a **local command-line operation only**: there is no HTTP endpoint that deletes data (the former `/api/reset_history` and `/api/full_reset` routes were removed because anything that could reach the server, including a web page open in your browser, could call them).
+
+Resetting **permanently destroys data**, including study history. Back the database up first:
 
 ```sh
 cp database/words.db database/words.backup.db
-rm database/words.db
+go run github.com/magefile/mage resetHistory yes   # study history only
+# or
+go run github.com/magefile/mage reset yes          # everything, then reload the starter data:
 go run github.com/magefile/mage seed
 ```
 
-All `database/*.db` files are git-ignored, so they are never committed (and never restored by git).
+Both tasks refuse to run without the explicit `yes` argument. You can also delete `database/words.db` and re-run `init` and `seed`. All `database/*.db` files are git-ignored, so they are never committed (and never restored by git).
 
 A database created before the Greek migration may still contain the old `french` column. `init` will not alter an existing table; back it up and recreate it as above.
 
@@ -83,7 +90,20 @@ A database created before the Greek migration may still contain the old `french`
 go run .
 ```
 
-The API listens on `http://localhost:8080`. CORS currently allows all origins.
+By default the API listens on **`127.0.0.1:8080` (this computer only)**, so other machines on your network cannot reach it. Settings (environment variables):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SERVER_ADDR` | `127.0.0.1:8080` | Address to listen on. Use `:8080` to listen on all interfaces (only on a network you trust: there is no authentication). |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173` | Comma-separated browser origins allowed to call the API (the Vite dev and preview servers). |
+
+The frontend normally calls `/api/...` on the Vite server, which proxies to `http://localhost:8080`; those same-origin requests carry no `Origin` header and are unaffected by the CORS list.
+
+### Security notes
+
+- **No authentication.** The API is meant for local use. Do not expose it to the internet.
+- **CORS is not access control.** A browser sends cross-origin requests regardless of CORS; CORS only decides which pages may read the answer. As defence in depth, requests whose `Origin` is not allowed are rejected with `403` before they reach a handler, which also stops other websites from posting to the write routes. Non-browser clients (such as `curl`) send no `Origin` and are not affected, which is why the localhost binding matters.
+- **Write routes.** `POST /api/activities` and `POST /api/sessions/:id/words/:word_id/review` can add rows, but nothing in the API deletes or overwrites data.
 
 ## Testing
 
@@ -91,7 +111,7 @@ The API listens on `http://localhost:8080`. CORS currently allows all origins.
 go test ./...
 ```
 
-The API tests create a throwaway SQLite database in a temporary directory from `migrations/0001_init.sql` and delete it when they finish. They never touch `database/*.db`, so tests are reproducible and safe to run next to a real `words.db`.
+Each API test creates its own throwaway SQLite database in a temporary directory from `migrations/0001_init.sql` and deletes it when it finishes. The tests never touch `database/*.db`, so they are reproducible and safe to run next to a real `words.db`. They use the real route table from the `router` package, and include regression tests that the reset routes stay removed (including calls with a foreign `Origin`), that no route can delete data, and that CORS only allows the configured origins.
 
 ## API overview
 
@@ -114,5 +134,3 @@ The API tests create a throwaway SQLite database in a temporary directory from `
 | GET | `/api/sessions/:id` | One session |
 | GET | `/api/sessions/:id/words` | Words reviewed in a session |
 | POST | `/api/sessions/:id/words/:word_id/review` | Record a word review |
-| POST | `/api/reset_history` | Clear study history (destructive) |
-| POST | `/api/full_reset` | Clear all data (destructive) |
