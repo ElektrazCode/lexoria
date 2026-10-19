@@ -1,4 +1,5 @@
 # Gates of Lexoria
+<img width="1499" height="1049" alt="Gates of Lexoria" src="./lang-portal/Documentation/reference_images/gates-of-lexoria.png" />
 
 **Gates of Lexoria** is a fantasy-inspired vocabulary-learning application that turns language practice into a journey through a library of words. The project currently uses **Modern Greek** vocabulary, with a language-neutral data model intended to support additional languages in the future.
 
