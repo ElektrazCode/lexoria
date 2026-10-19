@@ -1,4 +1,5 @@
 # Gates of Lexoria
+<img width="1499" height="1049" alt="Gates of Lexoria_ The Great Hall" src="https://github.com/user-attachments/assets/b92df44d-5831-4ac9-91f5-15b71be513d4" />
 
 **Gates of Lexoria** is a fantasy-inspired vocabulary-learning application that turns language practice into a journey through a library of words. The project currently uses **Modern Greek** vocabulary, with a language-neutral data model intended to support additional languages in the future.
 
