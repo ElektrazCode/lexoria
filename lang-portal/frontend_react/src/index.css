@@ -25,7 +25,17 @@
   --color-burgundy-300: #c98a95;
   --color-burgundy-500: #9a4152;
   --color-burgundy-700: #6e2433;
+  --color-burgundy-800: #561b29;
   --color-burgundy-900: #45141f;
+  --color-burgundy-950: #2c0c14;
+
+  /* Antique gold: trim, frames and focus on dark burgundy (the Great Hall banner and portals) */
+  --color-gold-100: #f3e6bf;
+  --color-gold-300: #dcc47e;
+  --color-gold-400: #c9a94f;
+  --color-gold-500: #b08d3a;
+  --color-gold-700: #7d6226;
+  --color-gold-900: #4a3a17;
 
   /* Ink: body text on parchment */
   --color-ink-600: #5e5246;

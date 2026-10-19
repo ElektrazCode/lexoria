@@ -22,8 +22,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
 
-    /* Path alias (mirrored in vite.config.ts) */
-    "baseUrl": ".",
+    /* Ambient types: Node for the tests and config that use process, node:fs, __dirname (vite/client comes from src/vite-env.d.ts) */
+    "types": ["node"],
+
+    /* Path alias (mirrored in vite.config.ts); without baseUrl, paths resolve relative to this file */
     "paths": {
       "@/*": ["./src/*"]
     }

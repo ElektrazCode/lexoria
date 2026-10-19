@@ -7,7 +7,7 @@
  * Set API_URL to use a backend that is not on http://localhost:8080.
  * They assume the seed data from backend_go/seeds (12 Greek words, 1 group).
  */
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { renderPage } from '@/test/render'
 import GreatHall from '@/pages/GreatHall'
@@ -35,10 +35,9 @@ describe('against the seeded Go backend', () => {
 
   it('Great Hall shows the seeded totals', async () => {
     renderPage(<GreatHall />)
-    const library = screen.getByRole('heading', { name: 'The Library' }).closest('article') as HTMLElement
-    expect(await within(library).findByText('Words in the Lexicon', {}, { timeout: 5000 })).toBeInTheDocument()
-    expect(within(library).getByText('Words in the Lexicon').nextElementSibling).toHaveTextContent('12')
-    expect(within(library).getByText('Word groups').nextElementSibling).toHaveTextContent('1')
+    const board = screen.getByRole('region', { name: 'The library at a glance' })
+    await waitFor(() => expect(within(board).getByText('Words').nextElementSibling).toHaveTextContent('12'), { timeout: 5000 })
+    expect(within(board).getByText('Word Groups').nextElementSibling).toHaveTextContent('1')
   })
 
   it('Memory Scrolls starts with the first seeded word', async () => {

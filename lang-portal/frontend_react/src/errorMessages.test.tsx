@@ -65,7 +65,7 @@ describe('Memory Scrolls with the backend unavailable', () => {
 })
 
 describe('Great Hall with the backend unavailable', () => {
-  it('shows the friendly message on every card, and each card recovers on its own', async () => {
+  it('shows the friendly message for every source, and each recovers on its own', async () => {
     const user = renderPage(<GreatHall />)
 
     await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(3))
@@ -73,8 +73,8 @@ describe('Great Hall with the backend unavailable', () => {
 
     backend = 'up'
     await user.click(screen.getByRole('button', { name: 'Try again: library statistics' }))
-    expect(await screen.findByText('Words in the Lexicon')).toBeInTheDocument()
-    expect(screen.getAllByRole('alert')).toHaveLength(2)
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(2))
+    expect(screen.queryByRole('button', { name: 'Try again: library statistics' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Try again: study sessions' }))
     await user.click(screen.getByRole('button', { name: 'Try again: last study session' }))
@@ -95,7 +95,7 @@ describe('a real error message from the Go backend is not replaced by the generi
     expect(alert).not.toHaveTextContent('may be unavailable')
   })
 
-  it('Great Hall shows the backend message on its cards', async () => {
+  it('Great Hall shows the backend message for each failed source', async () => {
     backend = 'json-error'
     renderPage(<GreatHall />)
 

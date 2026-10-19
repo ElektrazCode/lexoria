@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useNavigate } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -40,8 +40,10 @@ async function renderApp(path = '/') {
 }
 
 const heading = () => screen.getByRole('heading', { level: 1 })
-const navLink = (name: string) => screen.getByRole('link', { name })
-const navLinks = () => Array.from(screen.getByRole('navigation', { name: 'Main' }).querySelectorAll('a'))
+// The Great Hall also has portal cards that link to the same pages, so look in the main navigation only
+const mainNav = () => screen.getByRole('navigation', { name: 'Main' })
+const navLink = (name: string) => within(mainNav()).getByRole('link', { name })
+const navLinks = () => Array.from(mainNav().querySelectorAll('a'))
 const activeNavLinks = () =>
   navLinks().filter((link) => link.getAttribute('aria-current') === 'page').map((link) => link.textContent)
 
